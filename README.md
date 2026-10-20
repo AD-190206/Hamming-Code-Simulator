@@ -121,3 +121,52 @@ The project demonstrates the use of Hamming code in data
 communication. It shows how parity bits, syndrome calculation,
 and bit correction help improve the reliability of transmitted
 binary data.
+## Development Progress and Testing
+
+### Implemented Features
+- **Hamming Code Encoding:** Converts binary input into a Hamming codeword using even parity bits.
+- **Data Transmission Simulation:** Supports normal transmission and simulated single-bit errors at user-specified positions.
+- **Error Detection and Correction:** Calculates the syndrome to identify and correct single-bit errors, then recovers the original data.
+- **Interactive Streamlit Interface:** Displays the original, received, and corrected codewords, along with the syndrome and recovered data.
+- **Bit-Level Visualization:** Uses color-coded bit positions to distinguish data bits, parity bits, introduced errors, and corrected bits.
+- **Input Validation:** Validates binary input and error positions, displaying clear error messages and preventing invalid values from reaching the simulation.
+
+### Testing and Verification
+
+The automated test suite was executed using:
+
+```bash
+python -m unittest -v
+```
+
+**Result:** All 8 unit tests passed.
+
+The test suite covers:
+- Reference Hamming code encoding.
+- Normal transmission without errors.
+- Single-bit error detection and correction across codeword positions.
+- Error correction across multiple input lengths.
+- Invalid binary input handling.
+- Invalid error-position handling.
+- A two-bit error experiment demonstrating the limitations of basic Hamming code.
+
+### Manual UI Verification
+
+The following scenarios were manually tested through the Streamlit interface:
+
+| Test Scenario | Expected Result | Status |
+|---|---|---|
+| Normal transmission with input `1011` | Original data recovered; syndrome is 0 | Passed |
+| Single-bit error at position 1 | Error detected and corrected; input recovered | Passed |
+| Single-bit error at position 7 | Error detected and corrected; input recovered | Passed |
+| Invalid binary input | Validation error displayed | Passed |
+| Longer input `10101010` | Correct encoding and recovery using a 12-bit codeword | Passed |
+| Invalid error position | Validation error displayed; simulation blocked | Passed |
+
+### Known Limitation
+
+Basic Hamming code provides single-bit error correction but does not reliably correct multiple-bit errors. A multiple-bit error may produce an incorrect correction and recover data different from the original. The two-bit experiment illustrates this limitation.
+
+### Current Development Status
+
+The encoding, transmission simulation, error correction, input validation, visualization, and automated tests have been implemented and verified locally. The changes are currently on the `hamming-simulator-improvements` branch and are ready for version-control review and integration.

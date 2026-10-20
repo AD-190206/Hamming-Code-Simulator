@@ -1,5 +1,5 @@
 import streamlit as st
-
+import streamlit.components.v1 as components
 from hamming_simulator import (
     encode_hamming,
     display_codeword,
@@ -85,20 +85,61 @@ mode = st.sidebar.radio(
 
 position = None
 input_error = None
+codeword_length = None
 
-# Calculate valid codeword length before displaying position selector
+# Calculate valid codeword length before displaying position selector.
+# Use text_input so invalid edits (e.g. "abc", 0, or an out-of-range
+# position) can be explicitly validated instead of silently retaining
+# the number_input widget's previous valid value.
 if data and all(bit in "01" for bit in data):
     try:
         codeword_length = len(encode_hamming(data)) - 1
 
         if mode == "Inject Single-Bit Error":
-            position = st.sidebar.number_input(
+            position_input = st.sidebar.text_input(
                 "Bit position (counting from right)",
-                min_value=1,
-                max_value=codeword_length,
-                value=min(6, codeword_length),
-                step=1,
-            )
+                value=str(min(6, codeword_length)),
+                key="error_position",
+            ).strip()
+
+            # Validate the text field and restore a subtle red invalid state
+            # with an error icon, similar to Streamlit's native validation UI.
+            position_error = None
+            try:
+                parsed_position = int(position_input)
+                if not 1 <= parsed_position <= codeword_length:
+                    position_error = (
+                        f"Enter a position from 1 to {codeword_length}."
+                    )
+                else:
+                    position = parsed_position
+            except (ValueError, TypeError):
+                position_error = "Enter a valid whole-number position."
+
+            if position_error:
+                st.sidebar.markdown(
+                    """
+                    <style>
+                    /* Subtle invalid styling for the error-position field */
+                    div[data-testid="stSidebar"] div[data-testid="stTextInput"]
+                    input[aria-label="Bit position (counting from right)"] {
+                        background-color: rgba(239, 68, 68, 0.08) !important;
+                        border-color: #ef4444 !important;
+                        box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35) !important;
+                    }
+                    div[data-testid="stSidebar"] div[data-testid="stTextInput"]
+                    input[aria-label="Bit position (counting from right)"]:focus {
+                        background-color: rgba(239, 68, 68, 0.12) !important;
+                        border-color: #dc2626 !important;
+                        box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2) !important;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.sidebar.error(f"⚠️ {position_error}")
+            else:
+                st.sidebar.caption(f"Selected position: {position}")
 
     except (ValueError, TypeError) as error:
         input_error = str(error)
@@ -157,14 +198,45 @@ if run:
         codeword = encode_hamming(data)
         original_codeword = display_codeword(codeword)
 
-        # 2. COMMUNICATION CHANNEL
-        error_positions = []
+        # Show the role and value of each encoded bit.
+        codeword_length = len(codeword) - 1
 
+        # Validate the parsed position before any transmission occurs.
         if mode == "Inject Single-Bit Error":
-            error_positions = [int(position)]
+            if position is None:
+                st.error(
+                    "Simulation cancelled: enter a valid bit position "
+                    f"between 1 and {codeword_length}."
+                )
+                st.stop()
 
-        # IMPORTANT:
-        # This call matches the list-based transmit() function.
+            if not 1 <= position <= codeword_length:
+                st.error(
+                    f"Invalid bit position. Choose a value from "
+                    f"1 to {codeword_length}."
+                )
+                st.stop()
+
+        bit_details = [
+            {
+                "Position (from right)": pos,
+                "Bit value": codeword[pos],
+                "Bit type": (
+                    "Parity bit"
+                    if pos & (pos - 1) == 0
+                    else "Data bit"
+                ),
+            }
+            for pos in range(1, codeword_length + 1)
+        ]
+
+        # 2. COMMUNICATION CHANNEL
+        if mode == "Inject Single-Bit Error":
+            error_positions = [position]
+        else:
+            error_positions = []
+
+        # Transmit only after all input validation succeeds.
         received = transmit(codeword, error_positions)
 
         # 3. RECEIVER
@@ -182,6 +254,203 @@ if run:
         st.divider()
 
         sender, channel, receiver = st.columns(3)
+
+        with st.expander("Inspect transmission bit positions", expanded=True):
+            st.caption(
+                "Positions are numbered from the right, starting at 1. "
+                "Parity bits occupy positions that are powers of 2."
+            )
+
+            bit_count = len(codeword) - 1
+
+            # Convert the corrected display string back to the internal
+            # position-indexed list used by the Hamming Code algorithm.
+            corrected_bits = [0] + [
+                int(bit) for bit in reversed(result["corrected_codeword"])
+            ]
+
+            def build_bit_cells(
+                bits,
+                highlight_errors=False,
+                highlight_corrections=False,
+            ):
+                cells = []
+
+                for pos in range(bit_count, 0, -1):
+                    is_parity = (pos & (pos - 1)) == 0
+                    css_class = "parity" if is_parity else "data"
+                    label = "PARITY" if is_parity else "DATA"
+
+                    bit_value = bits[pos]
+                    cell_class = css_class
+
+                    # Red: bit changed during transmission.
+                    if (
+                        highlight_errors
+                        and bits[pos] != codeword[pos]
+                    ):
+                        cell_class = "error"
+
+                    # Green: receiver changed the received bit.
+                    elif (
+                        highlight_corrections
+                        and bits[pos] != received[pos]
+                    ):
+                        cell_class = "corrected"
+
+                    cells.append(
+                        f"""
+                        <div class="cell-group">
+                            <div class="bit-label {css_class}">
+                                {label}
+                            </div>
+                            <div class="bit-cell {cell_class}">
+                                {bit_value}
+                            </div>
+                            <div class="bit-position">
+                                {pos}
+                            </div>
+                        </div>
+                        """
+                    )
+
+                return "".join(cells)
+
+            original_cells = build_bit_cells(codeword)
+
+            received_cells = build_bit_cells(
+                received,
+                highlight_errors=True,
+            )
+
+            corrected_cells = build_bit_cells(
+                corrected_bits,
+                highlight_corrections=True,
+            )
+
+            html = f"""
+            <style>
+                * {{
+                    box-sizing: border-box;
+                }}
+
+                .bit-row {{
+                    display: grid;
+                    grid-template-columns: repeat(
+                        {bit_count}, minmax(0, 1fr)
+                    );
+                    gap: 6px;
+                    font-family: sans-serif;
+                    text-align: center;
+                    width: 100%;
+                }}
+
+                .cell-group {{
+                    min-width: 0;
+                }}
+
+                .bit-label {{
+                    font-size: 10px;
+                    font-weight: 700;
+                    margin-bottom: 6px;
+                    overflow-wrap: anywhere;
+                    background: transparent;
+                }}
+
+                .bit-cell {{
+                    background: #2b2b2b;
+                    padding: 12px 2px;
+                    border: 1px solid #444444;
+                    border-radius: 8px;
+                    font-size: 22px;
+                    font-weight: 700;
+                }}
+
+                .data {{
+                    color: #60a5fa;
+                }}
+
+                .parity {{
+                    color: #fbbf24;
+                }}
+
+                .error {{
+                    color: #fca5a5 !important;
+                    background: #7f1d1d;
+                    border: 1px solid #ef4444;
+                }}
+
+                .corrected {{
+                    color: #86efac !important;
+                    background: #14532d;
+                    border: 1px solid #22c55e;
+                }}
+
+                .bit-position {{
+                    margin-top: 6px;
+                    font-size: 10px;
+                    color: #a3a3a3;
+                }}
+
+                .section-title {{
+                    margin: 16px 0 8px;
+                    font: 600 12px sans-serif;
+                    color: #b3b3b3;
+                }}
+
+                .legend {{
+                    margin-top: 14px;
+                    font: 12px sans-serif;
+                    color: #a3a3a3;
+                    line-height: 1.8;
+                }}
+
+                .red-text {{
+                    color: #f87171;
+                }}
+
+                .green-text {{
+                    color: #4ade80;
+                }}
+
+                @media (max-width: 500px) {{
+                    .bit-row {{ gap: 3px; }}
+                    .bit-label {{ font-size: 8px; }}
+                    .bit-cell {{ padding: 8px 1px; font-size: 18px; }}
+                    .bit-position {{ font-size: 8px; }}
+                }}
+            </style>
+
+            <div class="section-title">
+                1. TRANSMITTER · ORIGINAL CODEWORD
+            </div>
+            <div class="bit-row">{original_cells}</div>
+
+            <div class="section-title">
+                2. CHANNEL · RECEIVED CODEWORD
+            </div>
+            <div class="bit-row">{received_cells}</div>
+
+            <div class="section-title">
+                3. RECEIVER · CORRECTED CODEWORD
+            </div>
+            <div class="bit-row">{corrected_cells}</div>
+
+            <div class="legend">
+                <span class="red-text">■ Error introduced</span>
+                &nbsp;&nbsp;
+                <span class="green-text">■ Bit corrected</span>
+                <br>
+                Red marks a bit flipped during transmission.
+                Green marks a bit changed by the receiver's correction.
+            </div>
+            """
+
+            components.html(
+                html,
+                height=410,
+                scrolling=False,
+            )
 
         # TRANSMITTER PANEL
         with sender:
@@ -286,4 +555,4 @@ st.divider()
 st.caption(
     "T.Y. B.Tech CSE | Computer Networks Laboratory | "
     "Hamming Code-Based Data Communication Simulator"
-) 
+)
